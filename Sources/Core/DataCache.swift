@@ -1,8 +1,14 @@
+
 // The MIT License (MIT)
 //
 // Copyright (c) 2015-2021 Alexander Grebenyuk (github.com/kean).
 
 import Foundation
+
+// MARK: - Typealiases
+
+public typealias PassPhraseClosure = () -> String
+public typealias EncryptorContextClosure = () -> Data
 
 // MARK: - DataCaching
 
@@ -93,6 +99,9 @@ public final class DataCache: DataCaching {
     private var isFlushNeeded = false
     private var isFlushScheduled = false
     var flushInterval: DispatchTimeInterval = .seconds(1)
+    
+    // Cache Encryption
+    private var encryptor: ImageDataEncrypting?
 
     /// A queue which is used for disk I/O.
     public let queue = DispatchQueue(label: "com.github.kean.Nuke.DataCache.WriteQueue", qos: .utility)
@@ -111,19 +120,33 @@ public final class DataCache: DataCaching {
     /// with the given `name` in a `.cachesDirectory` in `.userDomainMask`.
     /// - parameter filenameGenerator: Generates a filename for the given URL.
     /// The default implementation generates a filename using SHA1 hash function.
-    public convenience init(name: String, filenameGenerator: @escaping (String) -> String? = DataCache.filename(for:)) throws {
+    public convenience init(
+        name: String,
+        encryptor: ImageDataEncrypting? = nil,
+        filenameGenerator: @escaping (String) -> String? = DataCache.filename(for:)
+    ) throws {
         guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
             throw NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError, userInfo: nil)
         }
-        try self.init(path: root.appendingPathComponent(name, isDirectory: true), filenameGenerator: filenameGenerator)
+        try self.init(
+            path: root.appendingPathComponent(name, isDirectory: true),
+            encryptor: encryptor,
+            filenameGenerator: filenameGenerator
+        )
     }
 
     /// Creates a cache instance with a given path.
     /// - parameter filenameGenerator: Generates a filename for the given URL.
     /// The default implementation generates a filename using SHA1 hash function.
-    public init(path: URL, filenameGenerator: @escaping (String) -> String? = DataCache.filename(for:)) throws {
+    public init(
+        path: URL,
+        encryptor: ImageDataEncrypting? = nil,
+        filenameGenerator: @escaping (String) -> String? = DataCache.filename(for:)
+    ) throws {
         self.path = path
         self.filenameGenerator = filenameGenerator
+        self.encryptor = encryptor
+        
         try self.didInit()
 
         #if TRACK_ALLOCATIONS
@@ -165,6 +188,11 @@ public final class DataCache: DataCaching {
         guard let url = url(for: key) else {
             return nil
         }
+        
+        if let encryptor = encryptor, let decryptedData = encryptor.decrypt(url: url) {
+            return decryptedData
+        }
+        
         return try? Data(contentsOf: url)
     }
 
@@ -345,11 +373,21 @@ public final class DataCache: DataCaching {
         switch change.type {
         case let .add(data):
             do {
-                try data.write(to: url)
+                if let encryptor = encryptor, let encryptedData = try? encryptor.encrypt(data: data) {
+                    try encryptedData.write(to: url)
+                } else {
+                    try data.write(to: url)
+                }
             } catch let error as NSError {
                 guard error.code == CocoaError.fileNoSuchFile.rawValue && error.domain == CocoaError.errorDomain else { return }
                 try? FileManager.default.createDirectory(at: self.path, withIntermediateDirectories: true, attributes: nil)
-                try? data.write(to: url) // re-create a directory and try again
+                
+                // re-create a directory and try again
+                if let encryptor = encryptor, let encryptedData = try? encryptor.encrypt(data: data) {
+                    try? encryptedData.write(to: url)
+                } else {
+                    try? data.write(to: url)
+                }
             }
         case .remove:
             try? FileManager.default.removeItem(at: url)
@@ -533,4 +571,12 @@ private struct Staging {
             changeRemoveAll = nil
         }
     }
+}
+
+
+public protocol ImageDataEncrypting {
+    init(passPhraseClosure: PassPhraseClosure, cellContextClosure: @escaping EncryptorContextClosure)
+
+    func decrypt(url: URL) -> Data?
+    func encrypt(data: Data) throws -> Data
 }
