@@ -574,7 +574,7 @@ private struct Staging {
 }
 
 
-public protocol ImageDataEncrypting {
+@objc public protocol ImageDataEncrypting: AnyObject {
     init(passPhraseClosure: PassPhraseClosure, cellContextClosure: @escaping EncryptorContextClosure)
 
     func decrypt(url: URL) -> Data?
