@@ -2,6 +2,10 @@
 //
 // Copyright (c) 2015-2021 Alexander Grebenyuk (github.com/kean).
 
+#if !os(watchOS)
+import AVKit
+#endif
+
 import Foundation
 
 #if !os(macOS)
@@ -71,7 +75,7 @@ public struct ImageContainer {
     #endif
 
     /// An image type.
-    public var type: ImageType?
+    public var type: AssetType?
 
     /// Returns `true` if the image in the container is a preview of the image.
     public var isPreview: Bool
@@ -86,16 +90,27 @@ public struct ImageContainer {
     /// in the memory cache.
     public var data: Data?
 
+    #if !os(watchOS)
+    /// Represents in-memory video asset.
+    public var asset: AVAsset?
+    #endif
+
     /// An metadata provided by the user.
     public var userInfo: [UserInfoKey: Any]
 
     /// Initializes the container with the given image.
-    public init(image: PlatformImage, type: ImageType? = nil, isPreview: Bool = false, data: Data? = nil, userInfo: [UserInfoKey: Any] = [:]) {
+    public init(image: PlatformImage, type: AssetType? = nil, isPreview: Bool = false, data: Data? = nil, userInfo: [UserInfoKey: Any] = [:]) {
         self.image = image
         self.type = type
         self.isPreview = isPreview
         self.data = data
         self.userInfo = userInfo
+
+        #if !os(watchOS)
+        if type?.isVideo == true {
+            self.asset = data.flatMap(AVDataAsset.init(data:))
+        }
+        #endif
     }
 
     /// Modifies the wrapped image and keeps all of the rest of the metadata.
